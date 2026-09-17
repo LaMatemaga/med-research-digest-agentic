@@ -4,6 +4,9 @@
 # Generated outputs — personal medical content, not for version control
 outputs/
 
+# Seen-items memory (SQLite) — machine-local run state, not for version control
+data/
+
 # Python
 venv/
 __pycache__/

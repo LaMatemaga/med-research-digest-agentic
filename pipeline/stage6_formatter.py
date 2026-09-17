@@ -39,10 +39,28 @@ def format_paper_entry(paper: dict) -> str:
         synthesis,
         "",
         f"[PubMed →]({url})",
+    ]
+    trials_block = _format_matching_trials(paper.get("matching_trials", []))
+    if trials_block:
+        lines.append(trials_block)
+    lines += [
         "",
         "---",
         "",
     ]
+    return "\n".join(lines)
+
+
+def _format_matching_trials(trials: list[dict]) -> str:
+    if not trials:
+        return ""
+    lines = ["", "**Related registered trials:**"]
+    for t in trials:
+        status = t.get("status", "")
+        phase = t.get("phase", "")
+        meta = " | ".join(part for part in (status, phase) if part)
+        suffix = f" ({meta})" if meta else ""
+        lines.append(f"- [{t.get('nct_id', '')}: {t.get('title', '')}]({t.get('url', '')}){suffix}")
     return "\n".join(lines)
 
 

@@ -3,6 +3,12 @@ import logging
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 from utils.json_helpers import parse_json_response
 from config import MODEL_FAST as MODEL
+from search.mcp_config import (
+    PUBMED_SERVER_NAME,
+    PUBMED_TOOL_FETCH_FULLTEXT,
+    PUBMED_TOOL_FIND_RELATED,
+    pubmed_mcp_server,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +40,18 @@ Also rate clinical actionability:
 Consider their practice setting: academic physicians benefit more from methodological nuance;
 community physicians value practical applicability over research implications.
 
-Respond ONLY with valid JSON, no markdown, no preamble:
+TOOLS AVAILABLE:
+You have access to two PubMed tools. Most papers can be scored from the abstract alone —
+only reach for these when relevance is genuinely unclear from the abstract:
+- pubmed_find_related: checks whether this paper is part of a more (or less) relevant
+  cluster of work — e.g. a pivotal trial vs. one of many similar small studies.
+- pubmed_fetch_fulltext: pulls full text when the abstract doesn't show enough to judge
+  actionability for this specific physician.
+Call these tools as needed, then give your final answer. Your FINAL message must be
+ONLY the JSON object below — no commentary, no markdown, in the same or a later turn
+than any tool calls you make.
+
+Respond with valid JSON, no markdown, no preamble:
 {{
   "relevance_score": 8,
   "relevance_reasoning": "Direct RCT on heart failure with reduced ejection fraction — core subspecialty.",
@@ -65,6 +82,7 @@ def _build_system_prompt(profile: dict) -> str:
 async def score_paper(paper: dict, system_prompt: str) -> dict:
     """Scores a single paper. Never raises — returns defaults on any failure."""
     prompt = (
+        f"PMID: {paper.get('pmid', '')}\n"
         f"Title: {paper.get('title', '')}\n"
         f"Journal: {paper.get('journal', '')}\n"
         f"Study design: {paper.get('study_design', 'unknown')}\n"
@@ -74,19 +92,26 @@ async def score_paper(paper: dict, system_prompt: str) -> dict:
         f"Score this paper's relevance."
     )
 
-    options = ClaudeAgentOptions(system_prompt=system_prompt, max_turns=1, model=MODEL)
-    result_parts = []
+    options = ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        mcp_servers={PUBMED_SERVER_NAME: pubmed_mcp_server()},
+        allowed_tools=[PUBMED_TOOL_FETCH_FULLTEXT, PUBMED_TOOL_FIND_RELATED],
+        max_turns=4,
+        model=MODEL,
+    )
+    # Multi-turn now: keep only the *last* assistant turn's text, mirroring stage2.
+    last_text_blocks: list[str] = []
     try:
         async for msg in query(prompt=prompt, options=options):
             if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        result_parts.append(block.text)
+                text_blocks = [block.text for block in msg.content if isinstance(block, TextBlock)]
+                if text_blocks:
+                    last_text_blocks = text_blocks
     except Exception as e:
         logger.warning(f"Relevance scorer failed for PMID {paper.get('pmid', '?')}: {e}")
         return {**paper, **_DEFAULTS}
 
-    raw = "\n".join(result_parts)
+    raw = "\n".join(last_text_blocks)
     try:
         scored = parse_json_response(raw)
     except ValueError as e:

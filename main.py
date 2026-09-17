@@ -12,12 +12,20 @@ from context.physician import PROFILE
 from pipeline.stage1_discovery import run_discovery
 from pipeline.stage2_evidence_grader import grade_all
 from pipeline.stage3_relevance_filter import filter_papers
+from pipeline.stage3b_trials_crosscheck import crosscheck_trials
 from pipeline.stage4_voices import run_all_voices
 from pipeline.stage5_synthesizer import synthesize_all
 from pipeline.stage6_formatter import assign_tier, format_newsletter, save_newsletter
+from storage import seen_store
+from alerts.telegram import send_alerts_for_tier
 
 
-async def run_pipeline(days: int, specialty_override: str | None, dry_run: bool) -> None:
+async def run_pipeline(
+    days: int,
+    specialty_override: str | None,
+    dry_run: bool,
+    reset_seen: bool = False,
+) -> None:
     today = date.today()
     start = today - timedelta(days=days)
     date_range = f"{start.strftime('%Y-%m-%d')} to {today.strftime('%Y-%m-%d')}"
@@ -27,8 +35,13 @@ async def run_pipeline(days: int, specialty_override: str | None, dry_run: bool)
         print(f"  Specialty override: {specialty_override}")
     print()
 
+    seen_store.init_db()
+    if reset_seen:
+        print("  --reset-seen: clearing seen-items memory\n")
+        seen_store.reset()
+
     # Stage 1: Discovery
-    print("Stage 1: Discovery (PubMed)...")
+    print("Stage 1: Discovery (PubMed via MCP)...")
     papers = await run_discovery(PROFILE, days, specialty_override, dry_run)
     if dry_run:
         return
@@ -36,6 +49,12 @@ async def run_pipeline(days: int, specialty_override: str | None, dry_run: bool)
     n_found = len(papers)
     if not papers:
         print("\nNo papers found. Try --days 30 or add specialties to context/physician.py.")
+        return
+
+    papers = seen_store.filter_new(papers)
+    print(f"  Memory: {n_found} discovered -> {len(papers)} new since last run")
+    if not papers:
+        print("\nNo new papers since the last run. Use --reset-seen to see everything again.")
         return
 
     # Stage 2: Evidence grading
@@ -54,6 +73,10 @@ async def run_pipeline(days: int, specialty_override: str | None, dry_run: bool)
         )
         return
 
+    # Stage 3b: Clinical trials cross-check
+    print(f"\nStage 3b: Cross-checking clinical trials for {len(papers)} papers...")
+    papers = await crosscheck_trials(papers)
+
     # Stage 4: Voices
     print(f"\nStage 4: Running voices ({len(papers)} papers, voices run in parallel per paper)...")
     papers = await run_all_voices(papers, PROFILE)
@@ -70,6 +93,13 @@ async def run_pipeline(days: int, specialty_override: str | None, dry_run: bool)
     output_dir = str(Path(__file__).parent / "outputs")
     output_path = save_newsletter(content, output_dir)
 
+    seen_store.record_seen(papers)
+
+    # Severity-gated Telegram alerting for the top tier only
+    alerted_pmids = await send_alerts_for_tier(papers, assign_tier, top_tier="🔴")
+    for pmid in alerted_pmids:
+        seen_store.mark_alerted(pmid)
+
     # Console summary
     tiers = [assign_tier(p) for p in papers]
     n_red = tiers.count("🔴")
@@ -83,6 +113,7 @@ async def run_pipeline(days: int, specialty_override: str | None, dry_run: bool)
     print(f"  🔴 High:         {n_red}")
     print(f"  🟡 Moderate:     {n_yellow}")
     print(f"  🔵 Watching:     {n_blue}")
+    print(f"  Telegram alerts: {len(alerted_pmids)}")
     print(f"  Saved to:        {output_path}")
     print(f"{'=' * 50}\n")
 
@@ -97,6 +128,7 @@ Examples:
   python main.py --days 30               # last 30 days
   python main.py --specialty cardiology  # override to cardiology only
   python main.py --dry-run               # show PubMed queries, don't fetch
+  python main.py --reset-seen            # clear seen-items memory, show everything again
         """,
     )
     parser.add_argument(
@@ -117,6 +149,12 @@ Examples:
         action="store_true",
         help="Show PubMed queries without fetching or calling Claude",
     )
+    parser.add_argument(
+        "--reset-seen",
+        action="store_true",
+        help="Clear the seen-items memory before running, so every matching paper "
+        "surfaces again (demo control)",
+    )
     args = parser.parse_args()
 
     if not PROFILE.get("specialties") and not args.specialty:
@@ -125,7 +163,7 @@ Examples:
             "Add specialties or use --specialty <name> to override.\n"
         )
 
-    asyncio.run(run_pipeline(args.days, args.specialty, args.dry_run))
+    asyncio.run(run_pipeline(args.days, args.specialty, args.dry_run, args.reset_seen))
 
 
 if __name__ == "__main__":

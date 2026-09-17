@@ -3,6 +3,12 @@ import logging
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 from utils.json_helpers import parse_json_response
 from config import MODEL_FAST as MODEL
+from search.mcp_config import (
+    PUBMED_SERVER_NAME,
+    PUBMED_TOOL_FETCH_FULLTEXT,
+    PUBMED_TOOL_FIND_RELATED,
+    pubmed_mcp_server,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +58,18 @@ METHODOLOGY FLAGS (include all that apply):
 - "unregistered trial": RCT without a registration number
 - "preprint": not yet peer-reviewed
 
-Respond ONLY with valid JSON, no markdown, no preamble:
+TOOLS AVAILABLE:
+You have access to two PubMed tools. Most papers can be graded from the abstract
+alone — only reach for these when the abstract genuinely leaves the grade ambiguous:
+- pubmed_fetch_fulltext: retrieves full text (methods/results) when the abstract omits
+  sample size, randomization, blinding, or funding details you need to pick a level.
+- pubmed_find_related: finds related articles (trial registration, companion paper,
+  a later meta-analysis) when that context changes the grade.
+Call these tools as needed, then give your final answer. Your FINAL message must be
+ONLY the JSON object below — no commentary, no markdown, in the same or a later turn
+than any tool calls you make.
+
+Respond with valid JSON, no markdown, no preamble:
 {
   "study_design": "RCT",
   "evidence_level": "B",
@@ -71,6 +88,7 @@ _DEFAULTS = {
 async def grade_paper(paper: dict) -> dict:
     """Grades a single paper. Never raises — returns defaults on any failure."""
     prompt = (
+        f"PMID: {paper.get('pmid', '')}\n"
         f"Title: {paper.get('title', '')}\n"
         f"Journal: {paper.get('journal', '')}\n"
         f"Publication Date: {paper.get('pub_date', '')}\n"
@@ -79,19 +97,27 @@ async def grade_paper(paper: dict) -> dict:
         f"Grade this paper."
     )
 
-    options = ClaudeAgentOptions(system_prompt=SYSTEM_PROMPT, max_turns=1, model=MODEL)
-    result_parts = []
+    options = ClaudeAgentOptions(
+        system_prompt=SYSTEM_PROMPT,
+        mcp_servers={PUBMED_SERVER_NAME: pubmed_mcp_server()},
+        allowed_tools=[PUBMED_TOOL_FETCH_FULLTEXT, PUBMED_TOOL_FIND_RELATED],
+        max_turns=4,
+        model=MODEL,
+    )
+    # Multi-turn now: keep only the *last* assistant turn's text, since earlier turns
+    # may contain no text (pure tool calls) or shouldn't be mixed with the final JSON.
+    last_text_blocks: list[str] = []
     try:
         async for msg in query(prompt=prompt, options=options):
             if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        result_parts.append(block.text)
+                text_blocks = [block.text for block in msg.content if isinstance(block, TextBlock)]
+                if text_blocks:
+                    last_text_blocks = text_blocks
     except Exception as e:
         logger.warning(f"Claude grader failed for PMID {paper.get('pmid', '?')}: {e}")
         return {**paper, **_DEFAULTS}
 
-    raw = "\n".join(result_parts)
+    raw = "\n".join(last_text_blocks)
     try:
         grade = parse_json_response(raw)
     except ValueError as e:
