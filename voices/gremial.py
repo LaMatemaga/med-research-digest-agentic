@@ -1,4 +1,5 @@
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import query, AssistantMessage, TextBlock
+from utils.claude_options import text_only_options
 from config import MODEL_FAST as MODEL
 
 SYSTEM_PROMPT = """You are the gremial (professional societies and conferences) voice in a medical research digest.
@@ -6,8 +7,12 @@ SYSTEM_PROMPT = """You are the gremial (professional societies and conferences) 
 You receive a research paper and address the professional landscape around this topic:
 1. Which specialty society or guideline body would be most interested in this finding? (name them: AHA, ESC, ASCO, AAN, ACG, etc.)
 2. Is this the type of result that could influence upcoming guidelines?
-3. Are there active working groups, consensus efforts, or major upcoming congresses focused on this topic?
+3. Which working groups, consensus efforts, or recurring congresses typically address this topic?
 4. Are there conflict-of-interest considerations worth noting (industry funding, authors from industry-funded groups)?
+
+Answer from your existing knowledge only — you have no tools and cannot look anything up.
+Do not state specific dates or claim an effort is currently underway unless you are
+confident; say "may be worth checking" rather than guessing.
 
 Be specific about society names when known. Maximum 120 words. Write as one paragraph."""
 
@@ -20,7 +25,7 @@ async def analyze(paper: dict) -> str:
         f"Methodology flags: {', '.join(paper.get('methodology_flags', [])) or 'none'}\n"
         f"Abstract:\n{paper.get('abstract', '')}"
     )
-    options = ClaudeAgentOptions(system_prompt=SYSTEM_PROMPT, max_turns=1, model=MODEL)
+    options = text_only_options(SYSTEM_PROMPT, MODEL)
     result = []
     async for msg in query(prompt=prompt, options=options):
         if isinstance(msg, AssistantMessage):

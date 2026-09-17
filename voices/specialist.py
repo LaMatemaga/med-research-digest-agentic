@@ -1,4 +1,5 @@
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import query, AssistantMessage, TextBlock
+from utils.claude_options import text_only_options
 from config import MODEL_FAST as MODEL
 
 
@@ -25,7 +26,7 @@ Do not repeat the abstract — add specialist context."""
             f"Evidence level: {paper.get('evidence_level', 'C')} ({paper.get('study_design', 'unknown')})\n"
             f"Abstract:\n{paper.get('abstract', '')}"
         )
-        options = ClaudeAgentOptions(system_prompt=system_prompt, max_turns=1, model=MODEL)
+        options = text_only_options(system_prompt, MODEL)
         result = []
         async for msg in query(prompt=prompt, options=options):
             if isinstance(msg, AssistantMessage):
