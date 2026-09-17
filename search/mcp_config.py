@@ -12,6 +12,12 @@ from claude_agent_sdk.types import McpStdioServerConfig
 PUBMED_SERVER_NAME = "pubmed"
 CLINICALTRIALS_SERVER_NAME = "clinicaltrials"
 
+# Env for the Claude Code CLI process the SDK spawns. The CLI caps MCP tool output at
+# MAX_MCP_OUTPUT_TOKENS (25k by default) and replaces anything larger with a notice,
+# which is easy to hit with full PubMed article metadata. Fetches are also batched
+# small (see pubmed_mcp_client), so this is headroom, not the only safeguard.
+CLI_ENV = {"MAX_MCP_OUTPUT_TOKENS": "100000"}
+
 
 def pubmed_mcp_server() -> McpStdioServerConfig:
     """@cyanheads/pubmed-mcp-server, stdio transport. NCBI_API_KEY is optional

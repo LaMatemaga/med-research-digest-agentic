@@ -231,6 +231,9 @@ python main.py --dry-run
 
 # Clear remembered items so the next run surfaces everything again (demo control)
 python main.py --reset-seen
+
+# Log the raw input and raw, unparsed result of every MCP tool call to stderr
+python main.py --days 30 --debug-mcp 2> mcp-debug.log
 ```
 
 ### Recommended first run
@@ -404,6 +407,9 @@ Make sure your virtual environment is active (`source venv/bin/activate` or `ven
 
 **`CLINotFoundError` or the run hangs on Stage 1**
 The Claude Agent SDK needs the `claude` CLI on your PATH (`npm install -g @anthropic-ai/claude-code`), and that CLI needs Node.js 18+ to launch the PubMed/ClinicalTrials.gov MCP servers via `npx`. Run `claude --version` and `npx --version` to confirm both are available before filing a bug.
+
+**"search found N PMIDs but … yielded no parseable articles"**
+Re-run with `--debug-mcp 2> mcp-debug.log`. Every MCP tool call's arguments and raw result (plus the CLI's raw `tool_use_result` envelope) get logged there, and any payload the parsers can't read is also printed as a warning with the raw text. `search/pubmed_mcp_client.py` handles both forms the PubMed server produces (`structuredContent` JSON and its markdown `content[]`) and fetches in batches of `FETCH_BATCH_SIZE` so large results don't hit the CLI's MCP output cap.
 
 **No Telegram alert arrives**
 Check that `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are both set in `.env`, that you've messaged your bot at least once (Telegram won't let a bot message a chat it hasn't seen), and that at least one paper actually reached the 🔴 tier this run (alerting is intentionally gated to the top severity tier only).

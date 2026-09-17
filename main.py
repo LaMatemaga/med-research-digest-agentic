@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import logging
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -128,6 +129,12 @@ async def run_pipeline(
     print(f"{'=' * 50}\n")
 
 
+def configure_logging(debug_mcp: bool) -> None:
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s [%(name)s] %(message)s")
+    if debug_mcp:
+        logging.getLogger("search").setLevel(logging.DEBUG)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Medical research newsletter generator powered by PubMed + Claude",
@@ -139,6 +146,7 @@ Examples:
   python main.py --specialty cardiology  # override to cardiology only
   python main.py --dry-run               # show PubMed queries, don't fetch
   python main.py --reset-seen            # clear seen-items memory, show everything again
+  python main.py --days 30 --debug-mcp   # log raw MCP tool payloads to stderr
         """,
     )
     parser.add_argument(
@@ -165,7 +173,14 @@ Examples:
         help="Clear the seen-items memory before running, so every matching paper "
         "surfaces again (demo control)",
     )
+    parser.add_argument(
+        "--debug-mcp",
+        action="store_true",
+        help="Log the raw input and raw, unparsed result of every MCP tool call "
+        "(PubMed, ClinicalTrials.gov) to stderr, for diagnosing parse mismatches",
+    )
     args = parser.parse_args()
+    configure_logging(args.debug_mcp)
 
     if not PROFILE.get("specialties") and not args.specialty:
         print(
