@@ -65,6 +65,14 @@ _DEFAULTS = {
     "clinical_actionability": "moderate",
 }
 
+# Below the >= 5 keep threshold: with no abstract there is nothing to judge actionability
+# on. Still returned in all_scored, so the paper is remembered as seen.
+NO_ABSTRACT_SCORE = {
+    "relevance_score": 3,
+    "relevance_reasoning": "No abstract available; not scored.",
+    "clinical_actionability": "low",
+}
+
 
 def _build_system_prompt(profile: dict) -> str:
     prefs = profile.get("newsletter_preferences", {})
@@ -81,7 +89,11 @@ def _build_system_prompt(profile: dict) -> str:
 
 
 async def score_paper(paper: dict, system_prompt: str) -> dict:
-    """Scores a single paper. Never raises — returns defaults on any failure."""
+    """Scores a single paper. Never raises — returns defaults on any failure.
+    No abstract: NO_ABSTRACT_SCORE without a Claude call."""
+    if not (paper.get("abstract") or "").strip():
+        return {**paper, **NO_ABSTRACT_SCORE}
+
     prompt = (
         f"PMID: {paper.get('pmid', '')}\n"
         f"Title: {paper.get('title', '')}\n"

@@ -152,8 +152,27 @@ anything.
 4. In a browser, open `https://api.telegram.org/bot<your-token>/getUpdates` and look for
    `"chat":{"id": ...}` in the response — that number is your `TELEGRAM_CHAT_ID`.
    (For a group chat, add the bot to the group first; group chat IDs are negative numbers.)
-5. Run the pipeline once with a paper that should hit the 🔴 tier — you should get a
-   plain-text message on Telegram within seconds of the run finishing.
+5. Run the pipeline once with a paper that should hit the 🔴 tier. You should get a Telegram
+   message within seconds of the run finishing.
+
+### What an alert looks like (Telegram + Telegraph)
+
+Each 🔴 paper gets two pieces:
+
+- **A [Telegraph](https://telegra.ph) page** with the full analysis: journal and date,
+  evidence level, relevance score, key takeaway, the complete synthesis, why it's relevant
+  to you, matching trials with ClinicalTrials.gov links, and the PubMed link.
+- **A short Telegram teaser:** bold title, tier and score, a one-sentence hook, and a
+  **📄 Leer análisis completo** link to that page.
+
+Telegraph needs no signup. On the first alert the pipeline creates an anonymous Telegraph
+account and caches its access token in `data/seen_items.db`, then reuses it on later runs.
+To use a specific account, set `TELEGRAPH_ACCESS_TOKEN`.
+
+If Telegraph is down or rejects the page, the full analysis is sent directly on Telegram
+instead: formatted and trimmed to whole sentences within Telegram's 4096-character limit,
+with a note if some sentences didn't fit. Set `TELEGRAPH_ENABLED=false` to always use that
+direct message.
 
 ---
 
@@ -450,6 +469,10 @@ The model tried a tool call in a single-turn text-only step. Voices and the synt
 **No Telegram alert arrives**
 Check that `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are both set in `.env`, that you've messaged your bot at least once (Telegram won't let a bot message a chat it hasn't seen), and that at least one paper actually reached the 🔴 tier this run (alerting is intentionally gated to the top severity tier only).
 
+**Alert arrives as one long message instead of a teaser with a "Leer análisis completo" link**
+Telegraph failed and the fallback kicked in, which is by design. The console log has a
+`Telegraph page failed for PMID …` warning with the reason.
+
 **Digest looks identical to last time / nothing new**
 That's the seen-items memory (`storage/seen_store.py`) working as intended — re-runs only surface genuinely new papers. Use `--reset-seen` to see the full result set again.
 
@@ -457,7 +480,7 @@ That's the seen-items memory (`storage/seen_store.py`) working as intended — r
 
 ## Privacy
 
-This tool queries PubMed and ClinicalTrials.gov with your specialty terms only — your physician profile stays local and is never sent to either. The profile is sent to Claude (Anthropic API) as context for relevance scoring and synthesis. Telegram alerts are sent only for the top severity tier, to the chat ID you configure. Do not include patient data of any kind in the profile.
+This tool queries PubMed and ClinicalTrials.gov with your specialty terms only — your physician profile stays local and is never sent to either. The profile is sent to Claude (Anthropic API) as context for relevance scoring and synthesis. Telegram alerts are sent only for the top severity tier, to the chat ID you configure. **Telegraph pages are public web pages**: they aren't listed or searchable, but anyone with the link can open them. They contain the paper summary plus the "why this is relevant to you" note, which reflects your profile's specialties and interests. Set `TELEGRAPH_ENABLED=false` if that's not acceptable. Do not include patient data of any kind in the profile.
 
 ---
 

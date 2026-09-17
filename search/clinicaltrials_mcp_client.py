@@ -30,7 +30,8 @@ _SYSTEM_PROMPT = """You are a clinical trials lookup assistant with access to th
 ClinicalTrials.gov MCP tool clinicaltrials_search_studies.
 
 Given a paper's condition, call clinicaltrials_search_studies exactly once with
-conditionQuery set to that condition and pageSize set to the requested number. Then reply
+conditionQuery set to that condition verbatim — do not add brackets, quotes, AND/OR/NOT or
+extra words — and pageSize set to the requested number. Then reply
 with the single word DONE. Do not summarize the results yourself — the caller reads the
 raw tool output."""
 
@@ -68,12 +69,55 @@ async def find_matching_trials(paper: dict, max_results: int = 3) -> list[dict]:
     return trials[:max_results]
 
 
+# Checked live against https://clinicaltrials.gov/api/v2/studies?query.cond=… (the call
+# the MCP server makes), not assumed:
+# - `[` / `]` outside AREA[…]/RANGE[…] -> 400 "extraneous input '['". PubMed wraps
+#   translated titles in brackets ("[Efficacy of …].").
+# - ~20+ words -> 400 "Too complicated query" (a full title used as a fallback hit this).
+# - uppercase AND/OR/NOT are operators ("heart failure OR diabetes" returned 1000x more).
+# - `, : ; /` and matched `( )` parse fine, but every extra word is ANDed, so a long
+#   query also collapses to 0-2 matches well before it errors.
+MAX_QUERY_WORDS = 5
+_QUERY_UNSAFE_RE = re.compile(r"[^A-Za-z0-9\- ]+")
+_BOOLEAN_WORDS = {"and", "or", "not"}
+_TITLE_STOPWORDS = _BOOLEAN_WORDS | {
+    "a", "an", "the", "of", "in", "on", "for", "with", "without", "to", "from", "by", "at", "as",
+    "vs", "versus", "among", "after", "before", "during", "between", "into", "via", "its", "their",
+    "is", "are", "was", "were", "be", "effect", "effects", "impact", "association", "associated",
+    "study", "trial", "randomized", "randomised", "controlled", "double-blind", "placebo-controlled",
+    "cohort", "retrospective", "prospective", "systematic", "review", "meta-analysis", "analysis",
+    "patients", "adults", "children", "case", "report", "evaluation", "outcomes", "results",
+}
+# MeSH check tags / generic descriptors: never a useful trial condition.
+_GENERIC_MESH = {
+    "humans", "animals", "male", "female", "adult", "aged", "aged, 80 and over", "middle aged",
+    "young adult", "adolescent", "child", "child, preschool", "infant", "infant, newborn",
+    "pregnancy", "retrospective studies", "prospective studies", "cohort studies",
+    "treatment outcome", "risk factors", "double-blind method", "follow-up studies",
+    "cross-sectional studies", "time factors", "surveys and questionnaires", "united states",
+}
+
+
 def _build_condition_query(paper: dict) -> str:
-    """Derives a condition query from MeSH terms, falling back to the title."""
-    mesh_terms = paper.get("mesh_terms", [])
-    if mesh_terms:
-        return mesh_terms[0]
-    return paper.get("title", "")[:120]
+    """A conditionQuery that is always valid Essie free text: the first non-generic MeSH
+    descriptor, else keywords from the title, as at most MAX_QUERY_WORDS plain words (no
+    brackets, no uppercase boolean operators). Empty when nothing usable is left."""
+    for term in paper.get("mesh_terms", []):
+        if term.strip().lower() not in _GENERIC_MESH and (query := _sanitize_query(term)):
+            return query
+    title_words = [
+        w for w in _sanitize_query(paper.get("title", ""), max_words=None).split()
+        if w.lower() not in _TITLE_STOPWORDS and len(w) > 1
+    ]
+    return " ".join(title_words[:MAX_QUERY_WORDS])
+
+
+def _sanitize_query(text: str, max_words: int | None = MAX_QUERY_WORDS) -> str:
+    words = [
+        w.strip("-") for w in _QUERY_UNSAFE_RE.sub(" ", text).split()
+        if w.strip("-") and w.lower() not in _BOOLEAN_WORDS
+    ]
+    return " ".join(words if max_words is None else words[:max_words])
 
 
 def extract_trials(result: ToolCallResult, pmid: str = "?") -> list[dict]:

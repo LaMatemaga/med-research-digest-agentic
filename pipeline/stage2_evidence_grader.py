@@ -86,8 +86,26 @@ _DEFAULTS = {
 }
 
 
+NO_ABSTRACT_GRADE = {
+    "study_design": "unknown",
+    "evidence_level": "C",
+    "methodology_flags": ["no abstract"],
+    "grader_reasoning": "No abstract available; not graded.",
+}
+
+
+def has_abstract(paper: dict) -> bool:
+    return bool((paper.get("abstract") or "").strip())
+
+
 async def grade_paper(paper: dict) -> dict:
-    """Grades a single paper. Never raises — returns defaults on any failure."""
+    """Grades a single paper. Never raises — returns defaults on any failure.
+    A paper with no abstract is an expected data-quality case (PubMed has records
+    without one): it gets NO_ABSTRACT_GRADE without a Claude call, which would only
+    refuse to grade it."""
+    if not has_abstract(paper):
+        return {**paper, **NO_ABSTRACT_GRADE}
+
     prompt = (
         f"PMID: {paper.get('pmid', '')}\n"
         f"Title: {paper.get('title', '')}\n"
@@ -136,6 +154,9 @@ async def grade_paper(paper: dict) -> dict:
 
 async def grade_all(papers: list[dict]) -> list[dict]:
     """Grades papers with at most MAX_CONCURRENT_GRADING_CALLS in flight. Same order."""
+    n_no_abstract = sum(not has_abstract(p) for p in papers)
+    if n_no_abstract:
+        print(f"  {n_no_abstract} paper(s) have no abstract — not graded (evidence level C)")
     results = await gather_bounded(grade_paper, papers, MAX_CONCURRENT_GRADING_CALLS)
     graded = []
     for paper, result in zip(papers, results):

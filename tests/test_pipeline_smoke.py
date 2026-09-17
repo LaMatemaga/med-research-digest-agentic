@@ -16,6 +16,7 @@ import pipeline.stage3b_trials_crosscheck as stage3b
 import pipeline.stage1_discovery as stage1
 from alerts import telegram
 from storage import seen_store
+from tests.fakes import FakeHttp, FakeResponse
 from voices import clinician, gremial, methodologist, specialist
 
 
@@ -136,25 +137,10 @@ def _mock_all_external_calls(monkeypatch, isolated_seen_db, tmp_path):
 
     monkeypatch.setattr(stage5, "query", _prose_query("This RCT shows a mortality benefit for drug Y."))
 
-    # Stage 6 + alerting: no real Telegram network call.
-    class _FakeAsyncClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-        async def post(self, url, json=None):
-            class _Resp:
-                def raise_for_status(self):
-                    return None
-
-            return _Resp()
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    # Stage 6 + alerting: no real Telegraph or Telegram network call.
+    monkeypatch.setattr(httpx, "AsyncClient", FakeHttp().client_class())
+    monkeypatch.delenv("TELEGRAPH_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAPH_ENABLED", raising=False)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
 
@@ -257,20 +243,10 @@ async def test_failed_telegram_alert_is_not_marked_as_alerted(monkeypatch, isola
     alert: the paper stays remembered (first_seen), but alerted_at stays unset so a
     failure is visibly distinguishable from a real send."""
 
-    class _FailingAsyncClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return None
-
-        async def post(self, url, json=None):
-            raise httpx.ConnectTimeout("boom")
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FailingAsyncClient)
+    failing = FakeHttp()
+    failing.telegraph_fails = httpx.ConnectTimeout("telegraph down")
+    failing.telegram_responses = [FakeResponse(502, {"ok": False})]
+    monkeypatch.setattr(httpx, "AsyncClient", failing.client_class())
     monkeypatch.setattr(main, "PROFILE", _profile())
 
     await main.run_pipeline(days=7, specialty_override=None, dry_run=False, reset_seen=True)
