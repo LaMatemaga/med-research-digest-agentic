@@ -19,6 +19,26 @@ from storage import seen_store
 from voices import clinician, gremial, methodologist, specialist
 
 
+def _profile():
+    return {
+        "name": "Dr. Test",
+        "specialties": ["cardiology"],
+        "subspecialties": [],
+        "role": ["clinician"],
+        "practice_setting": "academic",
+        "country": "MX",
+        "research_interests": [],
+        "credentials": ["MD"],
+        "patient_population": "adult",
+        "newsletter_preferences": {
+            "max_papers": 5,
+            "min_evidence_level": "pilot",
+            "include_preprints": False,
+            "language": "english",
+        },
+    }
+
+
 def _text_query(payload: dict):
     async def _fake_query(*, prompt, options):
         yield AssistantMessage(
@@ -149,27 +169,7 @@ def _mock_all_external_calls(monkeypatch, isolated_seen_db, tmp_path):
 
 
 async def test_full_pipeline_runs_end_to_end_without_network_or_real_keys(monkeypatch, capsys):
-    monkeypatch.setattr(
-        main,
-        "PROFILE",
-        {
-            "name": "Dr. Test",
-            "specialties": ["cardiology"],
-            "subspecialties": [],
-            "role": ["clinician"],
-            "practice_setting": "academic",
-            "country": "MX",
-            "research_interests": [],
-            "credentials": ["MD"],
-            "patient_population": "adult",
-            "newsletter_preferences": {
-                "max_papers": 5,
-                "min_evidence_level": "pilot",
-                "include_preprints": False,
-                "language": "english",
-            },
-        },
-    )
+    monkeypatch.setattr(main, "PROFILE", _profile())
 
     await main.run_pipeline(days=7, specialty_override=None, dry_run=False, reset_seen=True)
 
@@ -179,27 +179,106 @@ async def test_full_pipeline_runs_end_to_end_without_network_or_real_keys(monkey
 
 
 async def test_second_run_finds_nothing_new(monkeypatch, capsys):
-    profile = {
-        "name": "Dr. Test",
-        "specialties": ["cardiology"],
-        "subspecialties": [],
-        "role": ["clinician"],
-        "practice_setting": "academic",
-        "country": "MX",
-        "research_interests": [],
-        "credentials": ["MD"],
-        "patient_population": "adult",
-        "newsletter_preferences": {
-            "max_papers": 5,
-            "min_evidence_level": "pilot",
-            "include_preprints": False,
-            "language": "english",
-        },
-    }
-    monkeypatch.setattr(main, "PROFILE", profile)
+    monkeypatch.setattr(main, "PROFILE", _profile())
 
     await main.run_pipeline(days=7, specialty_override=None, dry_run=False, reset_seen=True)
     await main.run_pipeline(days=7, specialty_override=None, dry_run=False, reset_seen=False)
 
     out = capsys.readouterr().out
     assert "No new papers since the last run" in out
+
+
+async def test_paper_dropped_by_relevance_filter_is_still_remembered(monkeypatch, isolated_seen_db):
+    """A paper that stage 3 discards for low relevance never reaches formatting or
+    alerting — but seen-store must still remember it, or it gets rediscovered and
+    re-scored (wasted grading + relevance calls) on every future run."""
+
+    class _TwoPaperClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+        async def search_and_fetch(self, query_spec):
+            return [
+                {
+                    "pmid": "111",
+                    "title": "High relevance paper",
+                    "authors": ["Smith J"],
+                    "journal": "NEJM",
+                    "pub_date": "2026-03",
+                    "abstract": "A large RCT with a clear mortality benefit.",
+                    "publication_types": ["Randomized Controlled Trial"],
+                    "mesh_terms": ["Heart Failure"],
+                    "source_specialty": query_spec["specialty"],
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/111/",
+                },
+                {
+                    "pmid": "222",
+                    "title": "Low relevance paper",
+                    "authors": ["Doe A"],
+                    "journal": "Obscure Journal",
+                    "pub_date": "2026-03",
+                    "abstract": "A basic-science finding of no direct clinical relevance.",
+                    "publication_types": [],
+                    "mesh_terms": [],
+                    "source_specialty": query_spec["specialty"],
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/222/",
+                },
+            ]
+
+    monkeypatch.setattr(stage1, "PubMedMCPClient", _TwoPaperClient)
+
+    async def _fake_relevance_query(*, prompt, options):
+        # PMID 111 scores high enough to survive; PMID 222 scores below the
+        # relevance_score >= 5 threshold and gets discarded by filter_papers.
+        score = 9 if "PMID: 111" in prompt else 2
+        payload = {
+            "relevance_score": score,
+            "relevance_reasoning": "test",
+            "clinical_actionability": "low",
+        }
+        yield AssistantMessage(content=[TextBlock(text=json.dumps(payload))], model="claude-haiku-4-5-20251001")
+
+    monkeypatch.setattr(stage3, "query", _fake_relevance_query)
+    monkeypatch.setattr(main, "PROFILE", _profile())
+
+    await main.run_pipeline(days=7, specialty_override=None, dry_run=False, reset_seen=True)
+
+    # Neither PMID should surface again on a re-run: 111 because it made the digest,
+    # 222 because it was recorded as "seen" right after stage 3 even though it was
+    # discarded before formatting/alerting.
+    assert seen_store.filter_new([{"pmid": "111"}, {"pmid": "222"}], db_path=isolated_seen_db) == []
+
+
+async def test_failed_telegram_alert_is_not_marked_as_alerted(monkeypatch, isolated_seen_db, capsys):
+    """A Telegram send failure must not be silently conflated with a successful
+    alert: the paper stays remembered (first_seen), but alerted_at stays unset so a
+    failure is visibly distinguishable from a real send."""
+
+    class _FailingAsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+        async def post(self, url, json=None):
+            raise httpx.ConnectTimeout("boom")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FailingAsyncClient)
+    monkeypatch.setattr(main, "PROFILE", _profile())
+
+    await main.run_pipeline(days=7, specialty_override=None, dry_run=False, reset_seen=True)
+
+    # The single canned paper (pmid 999) scores relevance_score=9 / evidence A, so
+    # it's 🔴-tier and an alert attempt is made — and fails, via the client above.
+    assert seen_store.filter_new([{"pmid": "999"}], db_path=isolated_seen_db) == []
+    assert seen_store.was_alerted("999", db_path=isolated_seen_db) is False
+
+    out = capsys.readouterr().out
+    assert "FAILED" in out

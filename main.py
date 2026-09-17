@@ -64,7 +64,12 @@ async def run_pipeline(
 
     # Stage 3: Relevance filter
     print(f"\nStage 3: Relevance filtering...")
-    papers = await filter_papers(papers, PROFILE)
+    papers, all_scored = await filter_papers(papers, PROFILE)
+
+    # Every paper that was actually graded and scored this run is now "processed" —
+    # remember it whether or not it made the digest, so a paper discarded for low
+    # relevance doesn't get rediscovered and rescored on every future run.
+    seen_store.record_seen(all_scored)
 
     if not papers:
         print(
@@ -93,9 +98,10 @@ async def run_pipeline(
     output_dir = str(Path(__file__).parent / "outputs")
     output_path = save_newsletter(content, output_dir)
 
-    seen_store.record_seen(papers)
-
-    # Severity-gated Telegram alerting for the top tier only
+    # Severity-gated Telegram alerting for the top tier only. "Seen" was already
+    # recorded right after stage 3 — alerted_at is a distinct signal set ONLY on a
+    # confirmed successful send, so a failed send never gets conflated with "seen"
+    # and stays visible (via the warning send_alert logs, and the count below).
     alerted_pmids = await send_alerts_for_tier(papers, assign_tier, top_tier="🔴")
     for pmid in alerted_pmids:
         seen_store.mark_alerted(pmid)
@@ -113,7 +119,11 @@ async def run_pipeline(
     print(f"  🔴 High:         {n_red}")
     print(f"  🟡 Moderate:     {n_yellow}")
     print(f"  🔵 Watching:     {n_blue}")
-    print(f"  Telegram alerts: {len(alerted_pmids)}")
+    n_alert_failed = n_red - len(alerted_pmids)
+    alert_summary = f"{len(alerted_pmids)}/{n_red} sent" if n_red else "0/0"
+    if n_alert_failed > 0:
+        alert_summary += f" ({n_alert_failed} FAILED — see warnings above, will not auto-retry)"
+    print(f"  Telegram alerts: {alert_summary}")
     print(f"  Saved to:        {output_path}")
     print(f"{'=' * 50}\n")
 

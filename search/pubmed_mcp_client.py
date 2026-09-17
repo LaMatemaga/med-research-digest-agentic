@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = """You are a PubMed research assistant with access to PubMed MCP tools.
 
 Given a search specification, you MUST, in order:
-1. Call pubmed_search_articles with the given query and retmax to get matching PMIDs.
+1. Call pubmed_search_articles with the given query and maxResults to get matching PMIDs.
 2. Call pubmed_fetch_articles with all PMIDs returned by the search (respecting the
    tool's per-call limit) to retrieve full metadata (title, authors, journal, abstract,
    publication types, MeSH terms).
@@ -50,11 +50,11 @@ class PubMedMCPClient:
         """Full round-trip via MCP tools: search -> fetch -> PaperRecord dicts."""
         specialty = query_spec["specialty"]
         pubmed_query = query_spec["query"]
-        retmax = query_spec["retmax"]
+        max_results = query_spec["retmax"]
 
         prompt = (
             f"Search query: {pubmed_query}\n"
-            f"retmax: {retmax}\n\n"
+            f"maxResults: {max_results}\n\n"
             "Run the PubMed search and fetch tool calls now."
         )
         options = ClaudeAgentOptions(

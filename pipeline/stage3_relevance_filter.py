@@ -126,10 +126,16 @@ async def score_paper(paper: dict, system_prompt: str) -> dict:
     }
 
 
-async def filter_papers(papers: list[dict], profile: dict) -> list[dict]:
+async def filter_papers(papers: list[dict], profile: dict) -> tuple[list[dict], list[dict]]:
     """
     Scores all papers, discards those with relevance_score < 5,
     sorts descending, caps at max_papers.
+
+    Returns (kept, all_scored): `kept` is the capped, sorted list that continues
+    through the rest of the pipeline; `all_scored` is every paper that was actually
+    scored this run (including ones discarded by the threshold or the cap), so the
+    caller can record all of them as "seen" — evaluating a paper is real work we
+    don't want to repeat on every run just because it didn't make the final digest.
     """
     system_prompt = _build_system_prompt(profile)
     max_papers = profile.get("newsletter_preferences", {}).get("max_papers", 10)
@@ -152,4 +158,4 @@ async def filter_papers(papers: list[dict], profile: dict) -> list[dict]:
     kept = kept[:max_papers]
 
     print(f"  Relevance filter: {len(papers)} → {len(kept)} papers (discarded {len(papers) - len(kept)})")
-    return kept
+    return kept, result
