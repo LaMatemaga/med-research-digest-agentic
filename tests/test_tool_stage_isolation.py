@@ -78,9 +78,11 @@ STAGES = [
 async def test_tool_stage_is_isolated_but_keeps_its_tools(monkeypatch, name, get_options, server, package, tools):
     [options] = await get_options(monkeypatch)
 
-    # Isolation: no ambient settings, plugins, or MCP config.
+    # Isolation: no ambient settings, plugins, or MCP config, and no built-in tools
+    # (WebSearch/WebFetch/Bash...) alongside the MCP tools.
     assert options.strict_mcp_config is True
     assert options.setting_sources == []
+    assert options.tools == []
 
     # Real tool access is intact: exactly this repo's server, launched via npx, and the
     # stage's tools pre-approved.
@@ -90,9 +92,12 @@ async def test_tool_stage_is_isolated_but_keeps_its_tools(monkeypatch, name, get
     assert set(options.allowed_tools) == tools
 
     # And the SDK turns that into the CLI flags we expect.
+    # Both halves must be in the same CLI command: built-ins off (`--tools ""`) AND this
+    # stage's MCP server + pre-approved MCP tools still passed.
     cmd = SubprocessCLITransport(prompt="p", options=dataclasses.replace(options, cli_path="claude"))._build_command()
     assert "--strict-mcp-config" in cmd
     assert "--setting-sources=" in cmd
+    assert cmd[cmd.index("--tools") + 1] == ""
     mcp_config = json.loads(cmd[cmd.index("--mcp-config") + 1])
     assert set(mcp_config["mcpServers"]) == {server}
     assert set(cmd[cmd.index("--allowedTools") + 1].split(",")) == tools
