@@ -1,7 +1,7 @@
-import asyncio
 import logging
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
-from config import MODEL_SMART as MODEL
+from config import MAX_CONCURRENT_SYNTHESIS_CALLS, MODEL_SMART as MODEL
+from utils.concurrency import gather_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ async def synthesize_paper(paper: dict) -> dict:
 
 async def synthesize_all(papers: list[dict]) -> list[dict]:
     """Synthesizes all papers concurrently."""
-    results = await asyncio.gather(*[synthesize_paper(p) for p in papers], return_exceptions=True)
+    results = await gather_bounded(synthesize_paper, papers, MAX_CONCURRENT_SYNTHESIS_CALLS)
     synthesized = []
     for paper, result in zip(papers, results):
         if isinstance(result, Exception):

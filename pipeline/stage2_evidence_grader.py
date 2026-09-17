@@ -1,8 +1,8 @@
-import asyncio
 import logging
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from utils.concurrency import gather_bounded
 from utils.json_helpers import parse_json_response
-from config import MODEL_FAST as MODEL
+from config import MAX_CONCURRENT_GRADING_CALLS, MODEL_FAST as MODEL
 from search.mcp_config import (
     PUBMED_SERVER_NAME,
     PUBMED_TOOL_FETCH_FULLTEXT,
@@ -134,8 +134,8 @@ async def grade_paper(paper: dict) -> dict:
 
 
 async def grade_all(papers: list[dict]) -> list[dict]:
-    """Grades all papers concurrently. Returns list in same order."""
-    results = await asyncio.gather(*[grade_paper(p) for p in papers], return_exceptions=True)
+    """Grades papers with at most MAX_CONCURRENT_GRADING_CALLS in flight. Same order."""
+    results = await gather_bounded(grade_paper, papers, MAX_CONCURRENT_GRADING_CALLS)
     graded = []
     for paper, result in zip(papers, results):
         if isinstance(result, Exception):

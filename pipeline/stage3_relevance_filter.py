@@ -1,8 +1,8 @@
-import asyncio
 import logging
 from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from utils.concurrency import gather_bounded
 from utils.json_helpers import parse_json_response
-from config import MODEL_FAST as MODEL
+from config import MAX_CONCURRENT_RELEVANCE_CALLS, MODEL_FAST as MODEL
 from search.mcp_config import (
     PUBMED_SERVER_NAME,
     PUBMED_TOOL_FETCH_FULLTEXT,
@@ -140,9 +140,8 @@ async def filter_papers(papers: list[dict], profile: dict) -> tuple[list[dict], 
     system_prompt = _build_system_prompt(profile)
     max_papers = profile.get("newsletter_preferences", {}).get("max_papers", 10)
 
-    scored = await asyncio.gather(
-        *[score_paper(p, system_prompt) for p in papers],
-        return_exceptions=True,
+    scored = await gather_bounded(
+        lambda p: score_paper(p, system_prompt), papers, MAX_CONCURRENT_RELEVANCE_CALLS
     )
 
     result = []

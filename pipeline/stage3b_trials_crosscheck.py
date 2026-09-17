@@ -1,7 +1,8 @@
-import asyncio
 import logging
 
+from config import MAX_CONCURRENT_TRIALS_CALLS
 from search.clinicaltrials_mcp_client import find_matching_trials
+from utils.concurrency import gather_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -10,9 +11,8 @@ async def crosscheck_trials(papers: list[dict]) -> list[dict]:
     """Cross-checks each top-relevance paper (already filtered by stage 3) against
     ClinicalTrials.gov, attaching a `matching_trials` list to each paper. Never drops
     a paper — a lookup failure just leaves matching_trials empty for that paper."""
-    results = await asyncio.gather(
-        *[find_matching_trials(p) for p in papers],
-        return_exceptions=True,
+    results = await gather_bounded(
+        lambda p: find_matching_trials(p), papers, MAX_CONCURRENT_TRIALS_CALLS
     )
 
     crosschecked = []

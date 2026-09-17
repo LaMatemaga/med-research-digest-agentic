@@ -367,6 +367,12 @@ It covers:
 - Wiring in Anthropic's **official OAuth-gated MCP connectors**
   (e.g. `pubmed.mcp.claude.com`) once a persistent, browser-authenticated deployment
   target (vs. this headless script) makes that flow practical.
+- **Sharing MCP server processes across calls.** Today every MCP-enabled call starts its
+  own `claude` CLI and its own `npx` MCP server, and the concurrency cap is what keeps
+  that affordable. Two ways to share them, neither verified live yet: run each MCP server
+  once per pipeline run over Streamable HTTP (both servers support it) and point calls at
+  it with an `http` MCP config, or keep one long-lived `ClaudeSDKClient` per stage (this
+  one needs care so one paper's conversation doesn't leak into the next).
 
 ---
 
@@ -386,9 +392,33 @@ The pipeline is split so cheaper, faster models handle the structured classifica
 
 To find current model IDs: [docs.anthropic.com/en/docs/about-claude/models](https://docs.anthropic.com/en/docs/about-claude/models)
 
+## Concurrency (memory safety)
+
+Every Claude call starts a `claude` CLI process (Node.js). Calls in the discovery, grading,
+relevance and trials stages also start an MCP server through `npx`, which adds more Node
+processes. Each stage therefore runs at most **`MAX_CONCURRENT_CLAUDE_CALLS`** calls at a time
+(default **4**). Set it in `.env` or the environment:
+
+```
+MAX_CONCURRENT_CLAUDE_CALLS=2   # low-memory laptop / live demo
+MAX_CONCURRENT_CLAUDE_CALLS=8   # workstation or CI runner with plenty of RAM
+```
+
+You can also tune each stage separately in `config.py` (`MAX_CONCURRENT_GRADING_CALLS`,
+`MAX_CONCURRENT_RELEVANCE_CALLS`, `MAX_CONCURRENT_TRIALS_CALLS`, …).
+
+A lower cap is safer but slower. Grading and relevance each make one call per new paper,
+so a 133-paper run is ~266 calls through those two stages alone. For a live demo, keep the
+input small: `--days 1`, a single `--specialty`, or a first run followed by a re-run
+(the seen-items memory skips papers it has already processed).
+
 ---
 
 ## Troubleshooting
+
+**`WinError 1455` / "El archivo de paginación es demasiado pequeño" / exit code 3221226505 / "Control request timeout: initialize"**
+The machine ran out of memory starting Claude CLI and MCP server processes. Lower
+`MAX_CONCURRENT_CLAUDE_CALLS` (try `2`) and use a smaller run (`--days 1` or `--specialty`).
 
 **"No specialties configured"**
 Fill in `specialties` in `context/physician.py`, or use `--specialty cardiology` on the command line.
