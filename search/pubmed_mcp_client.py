@@ -17,7 +17,7 @@ import logging
 import os
 import re
 
-from claude_agent_sdk import ClaudeAgentOptions
+from utils.claude_options import isolated_options
 
 from config import MODEL_FAST as MODEL
 from search.mcp_config import (
@@ -71,7 +71,7 @@ class PubMedMCPClient:
             "Run the PubMed search and fetch tool calls now."
         )
         n_fetch_batches = -(-max_results // FETCH_BATCH_SIZE)
-        options = ClaudeAgentOptions(
+        options = isolated_options(
             system_prompt=_SYSTEM_PROMPT,
             mcp_servers={PUBMED_SERVER_NAME: pubmed_mcp_server()},
             allowed_tools=[PUBMED_TOOL_SEARCH, PUBMED_TOOL_FETCH],

@@ -13,7 +13,7 @@ search/mcp_tool_runner.py), so both are parsed.
 import logging
 import re
 
-from claude_agent_sdk import ClaudeAgentOptions
+from utils.claude_options import isolated_options
 
 from config import MODEL_FAST as MODEL
 from search.mcp_config import (
@@ -47,7 +47,7 @@ async def find_matching_trials(paper: dict, max_results: int = 3) -> list[dict]:
         f"pageSize: {max_results}\n\n"
         "Run the clinicaltrials_search_studies tool call now."
     )
-    options = ClaudeAgentOptions(
+    options = isolated_options(
         system_prompt=_SYSTEM_PROMPT,
         mcp_servers={CLINICALTRIALS_SERVER_NAME: clinicaltrials_mcp_server()},
         allowed_tools=[CLINICALTRIALS_TOOL_SEARCH],

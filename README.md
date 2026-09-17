@@ -441,6 +441,9 @@ The Claude Agent SDK needs the `claude` CLI on your PATH (`npm install -g @anthr
 **"search found N PMIDs but … yielded no parseable articles"**
 Re-run with `--debug-mcp 2> mcp-debug.log`. Every MCP tool call's arguments and raw result (plus the CLI's raw `tool_use_result` envelope) get logged there, and any payload the parsers can't read is also printed as a warning with the raw text. `search/pubmed_mcp_client.py` handles both forms the PubMed server produces (`structuredContent` JSON and its markdown `content[]`) and fetches in batches of `FETCH_BATCH_SIZE` so large results don't hit the CLI's MCP output cap.
 
+**Auth or proxy errors from Claude calls, while `claude` works fine in your terminal**
+Every Claude call in the pipeline runs isolated (`utils/claude_options.isolated_options`: `strict_mcp_config=True`, `setting_sources=[]`). It ignores your `~/.claude` settings, plugins and any `.mcp.json`, so only this repo's MCP servers and tools load. That also means an API key, `apiKeyHelper`, base URL or proxy set in `~/.claude/settings.json` is not picked up. Put `ANTHROPIC_API_KEY` (and any proxy variables) in `.env` or the environment.
+
 **`Voice '…' failed … Reached maximum number of turns (1)`**
 The model tried a tool call in a single-turn text-only step. Voices and the synthesizer build their options with `utils/claude_options.text_only_options`, which removes built-in tools, MCP servers and inherited `~/.claude` settings. If you add a new voice, use that helper instead of a bare `ClaudeAgentOptions(...)`.
 

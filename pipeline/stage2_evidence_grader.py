@@ -1,5 +1,6 @@
 import logging
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import query, AssistantMessage, TextBlock
+from utils.claude_options import isolated_options
 from utils.concurrency import gather_bounded
 from utils.json_helpers import parse_json_response
 from config import MAX_CONCURRENT_GRADING_CALLS, MODEL_FAST as MODEL
@@ -97,7 +98,7 @@ async def grade_paper(paper: dict) -> dict:
         f"Grade this paper."
     )
 
-    options = ClaudeAgentOptions(
+    options = isolated_options(
         system_prompt=SYSTEM_PROMPT,
         mcp_servers={PUBMED_SERVER_NAME: pubmed_mcp_server()},
         allowed_tools=[PUBMED_TOOL_FETCH_FULLTEXT, PUBMED_TOOL_FIND_RELATED],
