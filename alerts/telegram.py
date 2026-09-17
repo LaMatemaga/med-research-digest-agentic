@@ -71,47 +71,123 @@ def format_teaser_message(paper: dict, page_url: str) -> str:
     return "\n".join(lines)
 
 
+def _truncate_plain_to_visible(plain: str, wrap, max_chars: int) -> str:
+    """Return plain text such that visible_length(wrap(escaped plain)) <= max_chars.
+
+    Cuts at a word boundary with an ellipsis when the full string does not fit. Escaping
+    happens only after the plain-text cut, so HTML entities are never split.
+    """
+    if visible_length(wrap(_esc(plain))) <= max_chars:
+        return plain
+    lo, hi = 1, len(plain)
+    best = "…"
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = truncate_at_word(plain, mid)
+        if visible_length(wrap(_esc(candidate))) <= max_chars:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if visible_length(wrap(_esc(best))) <= max_chars:
+        return best
+    return ""
+
+
 def format_alert_message(paper: dict, max_chars: int = TELEGRAM_MAX_CHARS) -> str:
     """Full alert sent directly when Telegraph is unavailable. Stays within max_chars of
-    visible text by dropping whole sentences, never cutting one mid-way."""
+    visible text by dropping whole sentences; an oversized single sentence is hard-truncated
+    at a word boundary with an ellipsis. Plain text is escaped only after the cut is chosen."""
     journal_line = " · ".join(p for p in (paper.get("journal", ""), paper.get("pub_date", "")) if p)
     head = _header_lines(paper)
     if journal_line:
         head.insert(1, f"<i>{_esc(journal_line)}</i>")
 
-    tail: list[str] = []
+    pubmed: list[str] = []
+    if paper.get("url"):
+        pubmed = ["", f'<a href="{_href(paper["url"])}">Read the abstract on PubMed</a>']
+
+    trials_tail: list[str] = []
     trials = [t for t in paper.get("matching_trials") or [] if t.get("nct_id")]
     if trials:
-        tail += ["", "<b>Matching trials</b>"]
+        trials_tail = ["", "<b>Matching trials</b>"]
         for t in trials:
             link = f'<a href="{_href(t["url"])}">{_esc(t["nct_id"])}</a>' if t.get("url") else _esc(t["nct_id"])
             title = f" — {_esc(truncate_at_word(t['title'], 120))}" if t.get("title") else ""
-            tail.append(f"• {link}{title}")
-    if paper.get("url"):
-        tail += ["", f'<a href="{_href(paper["url"])}">Read the abstract on PubMed</a>']
+            trials_tail.append(f"• {link}{title}")
 
     sentences = _synthesis_sentences(paper)
-    body: list[str] = []
-    if sentences:
-        body += ["", f"<b>Takeaway:</b> {_esc(sentences[-1])}", ""]
-        points = sentences[:-1]
-        included = []
-        for i, sentence in enumerate(points):
-            remaining = len(points) - i - 1
-            note = [f"<i>(+{remaining} more in today's digest)</i>"] if remaining else []
-            candidate = head + body + included + [f"• {_esc(sentence)}"] + note + tail
-            if visible_length("\n".join(candidate)) > max_chars:
-                omitted = len(points) - len(included)
-                included.append(f"<i>(+{omitted} more in today's digest)</i>")
-                break
-            included.append(f"• {_esc(sentence)}")
-        body += included
+    takeaway = sentences[-1] if sentences else None
+    points = sentences[:-1] if sentences else []
 
-    message = "\n".join(head + body + tail)
-    while visible_length(message) > max_chars and tail:
-        tail.pop()
-        message = "\n".join(head + body + tail)
-    return message
+    def build(takeaway_text: str | None, bullets: list[str], tail: list[str]) -> str:
+        body: list[str] = []
+        if takeaway_text is not None:
+            body = ["", f"<b>Takeaway:</b> {_esc(takeaway_text)}", ""] + bullets
+        return "\n".join(head + body + tail)
+
+    def fits(takeaway_text: str | None, bullets: list[str], tail: list[str]) -> bool:
+        return visible_length(build(takeaway_text, bullets, tail)) <= max_chars
+
+    # Prefer keeping the PubMed link; include trials only when they still fit.
+    candidate_tails = [trials_tail + pubmed, pubmed, []] if trials_tail else [pubmed, []]
+
+    if takeaway is None:
+        for tail in candidate_tails:
+            if fits(None, [], tail):
+                return build(None, [], tail)
+        return build(None, [], [])
+
+    fitted = takeaway
+    chosen_tail = pubmed
+    for tail in candidate_tails:
+        if fits(takeaway, [], tail):
+            fitted = takeaway
+            chosen_tail = tail
+            break
+    else:
+        # One sentence alone does not fit — hard-truncate at a word boundary.
+        for tail in candidate_tails:
+            fitted = _truncate_plain_to_visible(
+                takeaway,
+                lambda t, _tail=tail: build(t, [], _tail),
+                max_chars,
+            )
+            if fitted and fits(fitted, [], tail):
+                chosen_tail = tail
+                break
+        else:
+            fitted = _truncate_plain_to_visible(takeaway, lambda t: build(t, [], []), max_chars)
+            chosen_tail = []
+
+    included: list[str] = []
+    for i, sentence in enumerate(points):
+        remaining = len(points) - i - 1
+        note = [f"<i>(+{remaining} more in today's digest)</i>"] if remaining else []
+        placed = False
+        for tail in candidate_tails:
+            if fits(fitted, included + [f"• {_esc(sentence)}"] + note, tail):
+                included.append(f"• {_esc(sentence)}")
+                chosen_tail = tail
+                placed = True
+                break
+        if placed:
+            continue
+        omitted = len(points) - len(included)
+        note_line = [f"<i>(+{omitted} more in today's digest)</i>"]
+        for tail in candidate_tails:
+            if fits(fitted, included + note_line, tail):
+                included = included + note_line
+                chosen_tail = tail
+                break
+        break
+
+    for tail in candidate_tails:
+        if fits(fitted, included, tail):
+            chosen_tail = tail
+            break
+
+    return build(fitted, included, chosen_tail)
 
 
 async def _send_message(client: httpx.AsyncClient, token: str, chat_id: str, text: str) -> None:

@@ -1,4 +1,5 @@
 import json
+import re
 
 import httpx
 import pytest
@@ -159,6 +160,41 @@ def test_long_fallback_message_fits_4096_and_ends_on_whole_sentences():
     assert bullets and all(b in sentences for b in bullets)  # every bullet is a whole sentence
     assert "more in today's digest)" in text
     assert f"<b>Takeaway:</b> {sentences[-1]}" in text
+    assert "https://pubmed.ncbi.nlm.nih.gov/111/" in text
+
+
+def test_single_oversized_sentence_takeaway_fits_4096():
+    """A 5000-char single-sentence synthesis must be hard-truncated, not pasted whole."""
+    paper = _paper(synthesis="Word " * 1000, matching_trials=[])  # ~5000 chars, one sentence
+
+    text = telegram.format_alert_message(paper)
+
+    assert telegram.visible_length(text) <= telegram.TELEGRAM_MAX_CHARS
+    assert "<b>Takeaway:</b>" in text
+    assert "…" in text
+    assert "https://pubmed.ncbi.nlm.nih.gov/111/" in text
+    assert "Word " * 1000 not in text
+
+
+def test_very_long_title_fallback_fits_4096():
+    paper = _paper(title=("Heart failure outcomes " * 200).strip(), matching_trials=[])
+
+    text = telegram.format_alert_message(paper)
+
+    assert telegram.visible_length(text) <= telegram.TELEGRAM_MAX_CHARS
+    assert "https://pubmed.ncbi.nlm.nih.gov/111/" in text
+
+
+def test_special_chars_near_truncation_are_not_split_inside_entities():
+    # Dense & / < near the cut so a naive mid-entity slice would yield broken &amp; / &lt;.
+    chunk = "alpha & beta < gamma > delta "
+    paper = _paper(synthesis=chunk * 200, matching_trials=[])
+
+    text = telegram.format_alert_message(paper)
+
+    assert telegram.visible_length(text) <= telegram.TELEGRAM_MAX_CHARS
+    # Every & in the HTML is a complete entity (never a sliced &amp; / &lt;).
+    assert not re.search(r"&(?!(?:amp|lt|gt|quot);)", text)
     assert "https://pubmed.ncbi.nlm.nih.gov/111/" in text
 
 
