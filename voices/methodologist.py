@@ -1,4 +1,5 @@
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import query, AssistantMessage, TextBlock
+from utils.claude_options import text_only_options
 from config import MODEL_FAST as MODEL
 
 SYSTEM_PROMPT = """You are the methodologist voice in a medical research digest.
@@ -22,7 +23,7 @@ async def analyze(paper: dict) -> str:
         f"Methodology flags: {', '.join(paper.get('methodology_flags', [])) or 'none identified'}\n"
         f"Abstract:\n{paper.get('abstract', '')}"
     )
-    options = ClaudeAgentOptions(system_prompt=SYSTEM_PROMPT, max_turns=1, model=MODEL)
+    options = text_only_options(SYSTEM_PROMPT, MODEL)
     result = []
     async for msg in query(prompt=prompt, options=options):
         if isinstance(msg, AssistantMessage):

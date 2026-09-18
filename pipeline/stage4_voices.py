@@ -1,5 +1,6 @@
-import asyncio
 import logging
+from config import MAX_CONCURRENT_VOICE_CALLS
+from utils.concurrency import gather_bounded
 from voices import select_voices
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ async def run_voices_for_paper(paper: dict, voices: dict) -> dict:
     names = list(voices.keys())
     callables = list(voices.values())
 
-    results = await asyncio.gather(*[v(paper) for v in callables], return_exceptions=True)
+    results = await gather_bounded(lambda v: v(paper), callables, MAX_CONCURRENT_VOICE_CALLS)
 
     voice_outputs: dict[str, str | None] = {}
     for name, result in zip(names, results):

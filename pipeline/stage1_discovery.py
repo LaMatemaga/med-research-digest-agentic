@@ -1,7 +1,8 @@
-import asyncio
 import logging
+from config import MAX_CONCURRENT_DISCOVERY_CALLS
 from search.query_builder import build_esearch_queries
-from search.pubmed_client import PubMedClient
+from search.pubmed_mcp_client import PubMedMCPClient
+from utils.concurrency import gather_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,8 @@ async def run_discovery(
             print()
         return []
 
-    async with PubMedClient() as client:
-        tasks = [client.search_and_fetch(spec) for spec in query_specs]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    async with PubMedMCPClient() as client:
+        results = await gather_bounded(client.search_and_fetch, query_specs, MAX_CONCURRENT_DISCOVERY_CALLS)
 
     all_papers: list[dict] = []
     for spec, result in zip(query_specs, results):

@@ -1,7 +1,8 @@
-import asyncio
 import logging
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
-from config import MODEL_SMART as MODEL
+from claude_agent_sdk import query, AssistantMessage, TextBlock
+from utils.claude_options import text_only_options
+from config import MAX_CONCURRENT_SYNTHESIS_CALLS, MODEL_SMART as MODEL
+from utils.concurrency import gather_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _build_synthesis_prompt(paper: dict) -> str:
 async def synthesize_paper(paper: dict) -> dict:
     """Synthesizes all voice outputs into one paragraph. Falls back to abstract on failure."""
     prompt = _build_synthesis_prompt(paper)
-    options = ClaudeAgentOptions(system_prompt=SYSTEM_PROMPT, max_turns=1, model=MODEL)
+    options = text_only_options(SYSTEM_PROMPT, MODEL)
     result_parts = []
     try:
         async for msg in query(prompt=prompt, options=options):
@@ -82,7 +83,7 @@ async def synthesize_paper(paper: dict) -> dict:
 
 async def synthesize_all(papers: list[dict]) -> list[dict]:
     """Synthesizes all papers concurrently."""
-    results = await asyncio.gather(*[synthesize_paper(p) for p in papers], return_exceptions=True)
+    results = await gather_bounded(synthesize_paper, papers, MAX_CONCURRENT_SYNTHESIS_CALLS)
     synthesized = []
     for paper, result in zip(papers, results):
         if isinstance(result, Exception):

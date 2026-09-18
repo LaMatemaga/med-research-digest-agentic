@@ -1,4 +1,5 @@
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import query, AssistantMessage, TextBlock
+from utils.claude_options import text_only_options
 from config import MODEL_FAST as MODEL
 
 SYSTEM_PROMPT = """You are the clinician voice in a medical research digest.
@@ -21,7 +22,7 @@ async def analyze(paper: dict) -> str:
         f"Journal: {paper.get('journal', '')} ({paper.get('pub_date', '')})\n"
         f"Abstract:\n{paper.get('abstract', '')}"
     )
-    options = ClaudeAgentOptions(system_prompt=SYSTEM_PROMPT, max_turns=1, model=MODEL)
+    options = text_only_options(SYSTEM_PROMPT, MODEL)
     result = []
     async for msg in query(prompt=prompt, options=options):
         if isinstance(msg, AssistantMessage):
